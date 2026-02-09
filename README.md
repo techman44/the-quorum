@@ -20,6 +20,18 @@ One of our agents spotted a job listing, independently searched email history fo
 
 Plus a **Data Collector** that ingests external sources (email, documents, web pages) into the shared memory system.
 
+### Onboarding
+
+On first install, the system walks you through a conversational onboarding questionnaire powered by your configured LLM. It asks about your background (with optional LinkedIn/resume import for instant career context), your goals and priorities, how you want the agents to behave, notification preferences, and what data sources you'd want connected. Everything gets stored in the database so the agents have real data from day one.
+
+```bash
+# Run onboarding (automatically offered during install)
+python -m agents.onboarding
+
+# Re-run onboarding from scratch
+python -m agents.onboarding --reset
+```
+
 ---
 
 ## How It Works
@@ -88,19 +100,32 @@ Every agent reads from and writes to the same shared memory. They run on indepen
 git clone https://github.com/itcoreai/the-quorum.git
 cd the-quorum
 
-# Copy environment config
-cp .env.example .env
-# Edit .env with your database credentials and LLM provider
-
-# Start PostgreSQL + Ollama (via Docker)
-docker compose up -d
-
-# Install Python dependencies
-pip install -r requirements.txt
-
-# Run the install script (waits for services, pulls embedding model, etc.)
+# Run the install script -- handles everything
 chmod +x scripts/install.sh
 ./scripts/install.sh
+```
+
+The install script will:
+
+1. Check prerequisites (Python 3, pip, Docker)
+2. Start PostgreSQL + pgvector and Ollama via Docker Compose
+3. Wait for both services to be ready
+4. Pull the `mxbai-embed-large` embedding model and `llama3.2` LLM model
+5. Create a Python virtual environment and install dependencies
+6. Copy `.env.example` to `.env` with default configuration
+7. Run database schema migrations
+8. Offer to set up cron jobs for the conscience agents
+9. Offer to run the **onboarding questionnaire** (seeds the database with your profile, goals, and preferences so the agents have context from day one)
+10. Run a final health check
+
+To manage Docker services after installation:
+
+```bash
+cd the-quorum
+docker compose ps       # check service status
+docker compose logs -f  # view logs
+docker compose down     # stop services
+docker compose up -d    # start services
 ```
 
 ---
@@ -143,8 +168,9 @@ The agents run on independent cron schedules. Here is a recommended setup:
 # Opportunist - scan for quick wins every 6 hours
 0 */6 * * * cd /path/to/the-quorum && python agents/opportunist.py
 
-# Data Collector - ingest external sources hourly
-0 * * * * cd /path/to/the-quorum && python agents/data_collector.py
+# Data Collector - run on demand when you have data to ingest:
+#   echo "your text" | cd /path/to/the-quorum && python agents/data_collector.py
+#   cd /path/to/the-quorum && python agents/data_collector.py /path/to/file.txt
 ```
 
 Adjust cadences to match your workflow. The agents respect quiet hours configured in `.env`.
@@ -164,13 +190,24 @@ Adjust cadences to match your workflow. The agents respect quiet hours configure
 
 ```
 the-quorum/
-  agents/           # Agent scripts (Connector, Executor, etc.)
-  schema/           # PostgreSQL schema migrations
-  scripts/          # Install and utility scripts
-  docs/             # Extended documentation
-  docker-compose.yml
-  .env.example
-  requirements.txt
+  agents/              # Agent scripts
+    base.py            # Shared base class (DB, LLM, embeddings, search)
+    onboarding.py      # First-run questionnaire with LinkedIn/resume import
+    connector.py       # The Connector agent
+    executor.py        # The Executor agent
+    strategist.py      # The Strategist agent
+    devils_advocate.py # The Devil's Advocate agent
+    opportunist.py     # The Opportunist agent
+    data_collector.py  # The Data Collector agent
+    runner.py          # Generic agent runner CLI
+    prompts/           # System prompts for each agent
+  schema/              # PostgreSQL schema migrations (7 files)
+  scripts/             # Install, migrate, cron setup scripts
+  integrations/        # Configurable data source definitions
+  docs/                # Extended documentation
+  docker-compose.yml   # PostgreSQL + Ollama containers
+  .env.example         # Configuration template
+  requirements.txt     # Python dependencies
 ```
 
 ---
