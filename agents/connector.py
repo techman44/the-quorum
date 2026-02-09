@@ -74,7 +74,7 @@ class ConnectorAgent(QuorumAgent):
             limit=15,
         )
 
-    def _build_llm_payload(self, turn: dict, candidates: list[dict], other_agent_findings: list[dict] = None) -> str:
+    def _build_llm_payload(self, turn: dict, candidates: list[dict], other_agent_findings: list[dict] = None, flagged_for_you: list[dict] = None) -> str:
         """Assemble the user-message payload for the LLM."""
         payload = {
             "turn": {
@@ -102,6 +102,16 @@ class ConnectorAgent(QuorumAgent):
                     "created_at": f["created_at"].isoformat() if f.get("created_at") else None,
                 }
                 for f in (other_agent_findings or [])
+            ],
+            "flagged_for_you": [
+                {
+                    "agent": f.get("actor", ""),
+                    "event_type": f.get("event_type", ""),
+                    "title": f.get("title", ""),
+                    "description": (f.get("description") or "")[:500],
+                    "created_at": f["created_at"].isoformat() if f.get("created_at") else None,
+                }
+                for f in (flagged_for_you or [])
             ],
         }
         return json.dumps(payload, default=str)
@@ -143,6 +153,11 @@ class ConnectorAgent(QuorumAgent):
                 "Loaded %d recent findings from other agents.", len(other_agent_findings)
             )
 
+        # Check for events specifically flagged for the Connector by other agents.
+        flagged_for_me = self.get_events_flagged_for_me(hours=24)
+        if flagged_for_me:
+            logger.info("Found %d events flagged for %s by other agents", len(flagged_for_me), self.agent_name)
+
         total_connections = 0
         all_connection_titles = []
 
@@ -163,7 +178,7 @@ class ConnectorAgent(QuorumAgent):
                 continue
 
             # Ask the LLM to find non-obvious connections, including other agents' context.
-            payload = self._build_llm_payload(turn, candidates, other_agent_findings)
+            payload = self._build_llm_payload(turn, candidates, other_agent_findings, flagged_for_me)
             raw_response = self.call_llm(SYSTEM_PROMPT, payload)
             connections = self._parse_llm_response(raw_response)
 
@@ -176,11 +191,12 @@ class ConnectorAgent(QuorumAgent):
                     str(rid) for rid in conn_data.get("related_ids", [])
                 ]
 
+                considered_agents = conn_data.get("considered_agents", ["strategist", "executor"])
                 self.store_event(
                     event_type="connection",
                     title=conn_data.get("title", "Untitled connection"),
                     description=conn_data.get("description", ""),
-                    metadata={"confidence": confidence, "source": "connector"},
+                    metadata={"confidence": confidence, "source": "connector", "considered_agents": considered_agents},
                     ref_ids=related_ids,
                 )
                 total_connections += 1

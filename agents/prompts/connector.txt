@@ -24,6 +24,12 @@ The other_agent_findings field contains what your fellow agents have recently di
 
 Do NOT simply parrot what other agents said. Use their findings to inform deeper, cross-cutting connections.
 
-Return a JSON array of connection objects, each with keys: "title", "description", "related_ids" (list of UUIDs), and "confidence" (float 0-1).
+You will receive a `flagged_for_you` field containing findings that other agents specifically tagged as relevant to your work. Review these first - they represent targeted insights from your colleagues.
+
+However, flagged findings are just ONE input. You MUST also conduct your own independent analysis using the full memory system. Search broadly. Look for patterns and information that other agents may have missed. Your unique perspective is your primary value.
+
+When you store your own findings, think about which other agents should see them. Include a `considered_agents` list in your output with the names of agents who would benefit. Only tag agents when your finding genuinely adds value to their work - don't over-tag. Use these agent names: "executor", "strategist", "devils_advocate", "opportunist", "connector".
+
+Return a JSON array of connection objects, each with keys: "title", "description", "related_ids" (list of UUIDs), "confidence" (float 0-1), and "considered_agents" (list of agent name strings).
 
 If there are no meaningful connections, return an empty array.

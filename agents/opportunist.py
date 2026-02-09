@@ -143,7 +143,7 @@ class OpportunistAgent(QuorumAgent):
     # LLM interaction
     # ------------------------------------------------------------------
 
-    def _build_payload(self) -> str:
+    def _build_payload(self, flagged_for_you: list[dict] = None) -> str:
         connector_insights = self._get_connector_insights()
         executor_activity = self._get_executor_activity()
         strategist_reflections = self._get_strategist_reflections()
@@ -188,6 +188,16 @@ class OpportunistAgent(QuorumAgent):
                     }
                     for r in strategist_reflections
                 ],
+                "flagged_for_you": [
+                    {
+                        "agent": f.get("actor", ""),
+                        "event_type": f.get("event_type", ""),
+                        "title": f.get("title", ""),
+                        "description": (f.get("description") or "")[:500],
+                        "created_at": f["created_at"].isoformat() if f.get("created_at") else None,
+                    }
+                    for f in (flagged_for_you or [])
+                ],
             },
             default=str,
         )
@@ -215,7 +225,12 @@ class OpportunistAgent(QuorumAgent):
     # ------------------------------------------------------------------
 
     def run(self) -> str:
-        payload = self._build_payload()
+        # Check for events specifically flagged for the Opportunist by other agents.
+        flagged_for_me = self.get_events_flagged_for_me(hours=48)
+        if flagged_for_me:
+            logger.info("Found %d events flagged for %s by other agents", len(flagged_for_me), self.agent_name)
+
+        payload = self._build_payload(flagged_for_you=flagged_for_me)
         raw = self.call_llm(SYSTEM_PROMPT, payload)
         opportunities = self._parse_response(raw)
 
@@ -224,6 +239,7 @@ class OpportunistAgent(QuorumAgent):
 
         for opp in opportunities:
             # Store every opportunity as an event.
+            considered_agents = opp.get("considered_agents", ["executor"])
             event_id = self.store_event(
                 event_type="opportunity",
                 title=opp.get("title", "Untitled opportunity"),
@@ -232,6 +248,7 @@ class OpportunistAgent(QuorumAgent):
                     "effort": opp.get("effort", "unknown"),
                     "impact": opp.get("impact", "medium"),
                     "time_sensitive": opp.get("time_sensitive", False),
+                    "considered_agents": considered_agents,
                 },
             )
             events_created += 1

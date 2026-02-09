@@ -163,6 +163,7 @@ class ExecutorAgent(QuorumAgent):
         tasks: list[dict],
         connector_insights: list[dict] = None,
         opportunist_findings: list[dict] = None,
+        flagged_for_you: list[dict] = None,
     ) -> str:
         """Build a JSON payload for the LLM."""
 
@@ -187,6 +188,7 @@ class ExecutorAgent(QuorumAgent):
                 "open_tasks": _serialize(tasks),
                 "connector_insights": _serialize(connector_insights or []),
                 "opportunist_findings": _serialize(opportunist_findings or []),
+                "flagged_for_you": _serialize(flagged_for_you or []),
             },
             default=str,
         )
@@ -268,6 +270,7 @@ class ExecutorAgent(QuorumAgent):
                     f"({days_overdue} day(s) ago) and is still in '{task['status']}' status. "
                     f"Owner: {task.get('owner', 'unassigned')}."
                 ),
+                metadata={"considered_agents": ["strategist", "devils_advocate"]},
                 ref_ids=[str(task["id"])],
             )
             count += 1
@@ -282,6 +285,7 @@ class ExecutorAgent(QuorumAgent):
                     f"Status: '{task['status']}'. Owner: {task.get('owner', 'unassigned')}. "
                     f"Is this still relevant? If so, what's blocking it?"
                 ),
+                metadata={"considered_agents": ["strategist", "opportunist"]},
                 ref_ids=[str(task["id"])],
             )
             count += 1
@@ -305,6 +309,11 @@ class ExecutorAgent(QuorumAgent):
         if opportunist_findings:
             logger.info("Loaded %d Opportunist findings for context.", len(opportunist_findings))
 
+        # Check for events specifically flagged for the Executor by other agents.
+        flagged_for_me = self.get_events_flagged_for_me(hours=24)
+        if flagged_for_me:
+            logger.info("Found %d events flagged for %s by other agents", len(flagged_for_me), self.agent_name)
+
         # Phase 1: accountability for overdue / stale tasks (rule-based, no LLM needed).
         accountability_count = self._create_accountability_events()
 
@@ -312,7 +321,7 @@ class ExecutorAgent(QuorumAgent):
         created = 0
         updated = 0
         if turns or events:
-            payload = self._build_payload(turns, events, tasks, connector_insights, opportunist_findings)
+            payload = self._build_payload(turns, events, tasks, connector_insights, opportunist_findings, flagged_for_me)
             raw = self.call_llm(SYSTEM_PROMPT, payload)
             parsed = self._parse_response(raw)
 
@@ -321,10 +330,12 @@ class ExecutorAgent(QuorumAgent):
 
             # Phase 3: any additional accountability the LLM flagged.
             for ae in parsed.get("accountability_events", []):
+                considered_agents = ae.get("considered_agents", ["strategist", "devils_advocate"])
                 self.store_event(
                     event_type="accountability",
                     title=ae.get("title", "Accountability notice"),
                     description=ae.get("description", ""),
+                    metadata={"considered_agents": considered_agents},
                 )
                 accountability_count += 1
 

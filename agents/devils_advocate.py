@@ -105,7 +105,8 @@ class DevilsAdvocateAgent(QuorumAgent):
 
     def _build_payload(self, decisions: list[dict], tasks: list[dict],
                        connector_connections: list[dict] = None,
-                       strategist_reflections: list[dict] = None) -> str:
+                       strategist_reflections: list[dict] = None,
+                       flagged_for_you: list[dict] = None) -> str:
         return json.dumps(
             {
                 "decisions_and_plans": [
@@ -147,6 +148,16 @@ class DevilsAdvocateAgent(QuorumAgent):
                     }
                     for r in (strategist_reflections or [])
                 ],
+                "flagged_for_you": [
+                    {
+                        "agent": f.get("actor", ""),
+                        "event_type": f.get("event_type", ""),
+                        "title": f.get("title", ""),
+                        "description": (f.get("description") or "")[:500],
+                        "created_at": f["created_at"].isoformat() if f.get("created_at") else None,
+                    }
+                    for f in (flagged_for_you or [])
+                ],
             },
             default=str,
         )
@@ -185,11 +196,16 @@ class DevilsAdvocateAgent(QuorumAgent):
         if strategist_reflections:
             logger.info("Loaded %d Strategist reflections for critique context.", len(strategist_reflections))
 
-        if not decisions and not tasks and not connector_connections and not strategist_reflections:
+        # Check for events specifically flagged for the Devil's Advocate by other agents.
+        flagged_for_me = self.get_events_flagged_for_me(hours=48)
+        if flagged_for_me:
+            logger.info("Found %d events flagged for %s by other agents", len(flagged_for_me), self.agent_name)
+
+        if not decisions and not tasks and not connector_connections and not strategist_reflections and not flagged_for_me:
             logger.info("No recent decisions, tasks, connections, or reflections to critique.")
             return "Nothing to critique."
 
-        payload = self._build_payload(decisions, tasks, connector_connections, strategist_reflections)
+        payload = self._build_payload(decisions, tasks, connector_connections, strategist_reflections, flagged_for_me)
         raw = self.call_llm(SYSTEM_PROMPT, payload)
         critiques = self._parse_response(raw)
 
@@ -217,11 +233,12 @@ class DevilsAdvocateAgent(QuorumAgent):
                 if t.get("title") == target or str(t["id"]) == target:
                     ref_ids.append(str(t["id"]))
 
+            considered_agents = critique.get("considered_agents", ["strategist", "executor"])
             self.store_event(
                 event_type="critique",
                 title=f"Critique: {target}",
                 description=description,
-                metadata={"severity": severity, "target": target},
+                metadata={"severity": severity, "target": target, "considered_agents": considered_agents},
                 ref_ids=ref_ids,
             )
             stored += 1

@@ -168,7 +168,7 @@ class StrategistAgent(QuorumAgent):
     # LLM interaction
     # ------------------------------------------------------------------
 
-    def _build_payload(self) -> str:
+    def _build_payload(self, flagged_for_you: list[dict] = None) -> str:
         documents = self._recent_documents()
         events = self._recent_events()
         tasks = self._task_snapshot()
@@ -184,6 +184,16 @@ class StrategistAgent(QuorumAgent):
                 "tasks": tasks,
                 "conversations": conversations,
                 "cross_agent_context": cross_agent_context,
+                "flagged_for_you": [
+                    {
+                        "agent": f.get("actor", ""),
+                        "event_type": f.get("event_type", ""),
+                        "title": f.get("title", ""),
+                        "description": (f.get("description") or "")[:500],
+                        "created_at": f["created_at"].isoformat() if f.get("created_at") else None,
+                    }
+                    for f in (flagged_for_you or [])
+                ],
             },
             default=str,
         )
@@ -207,8 +217,13 @@ class StrategistAgent(QuorumAgent):
     # ------------------------------------------------------------------
 
     def run(self) -> str:
+        # Check for events specifically flagged for the Strategist by other agents.
+        flagged_for_me = self.get_events_flagged_for_me(hours=self.lookback_hours)
+        if flagged_for_me:
+            logger.info("Found %d events flagged for %s by other agents", len(flagged_for_me), self.agent_name)
+
         logger.info("Building payload with cross-agent context from all Quorum agents.")
-        payload = self._build_payload()
+        payload = self._build_payload(flagged_for_you=flagged_for_me)
         raw = self.call_llm(SYSTEM_PROMPT, payload)
         parsed = self._parse_response(raw)
 
@@ -263,7 +278,11 @@ class StrategistAgent(QuorumAgent):
             event_type="insight",
             title=title,
             description=content[:2000],
-            metadata={"document_id": doc_id, "reflection_type": self.reflection_type},
+            metadata={
+                "document_id": doc_id,
+                "reflection_type": self.reflection_type,
+                "considered_agents": ["executor", "devils_advocate", "connector", "opportunist"],
+            },
         )
 
         summary = (

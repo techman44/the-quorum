@@ -349,6 +349,23 @@ class QuorumAgent:
         cur.close()
         return [dict(r) for r in rows]
 
+    def get_events_flagged_for_me(self, hours: int = 24, limit: int = 20) -> list[dict]:
+        """Get events where other agents specifically flagged this agent in considered_agents metadata."""
+        conn = self.connect_db()
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("""
+            SELECT id, event_type, actor, title, description, metadata, created_at
+            FROM events
+            WHERE metadata->'considered_agents' ? %s
+            AND created_at > NOW() - make_interval(hours => %s)
+            AND actor != %s
+            ORDER BY created_at DESC
+            LIMIT %s
+        """, [self.agent_name, hours, self.agent_name, limit])
+        rows = cur.fetchall()
+        cur.close()
+        return [dict(r) for r in rows]
+
     # ------------------------------------------------------------------
     # LLM inference
     # ------------------------------------------------------------------
