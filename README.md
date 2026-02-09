@@ -168,9 +168,8 @@ The agents run on independent cron schedules. Here is a recommended setup:
 # Opportunist - scan for quick wins every 6 hours
 0 */6 * * * cd /path/to/the-quorum && python agents/opportunist.py
 
-# Data Collector - run on demand when you have data to ingest:
-#   echo "your text" | cd /path/to/the-quorum && python agents/data_collector.py
-#   cd /path/to/the-quorum && python agents/data_collector.py /path/to/file.txt
+# Data Collector - ingest files from data/inbox/ every 30 minutes
+*/30 * * * * cd /path/to/the-quorum && python agents/data_collector.py
 ```
 
 Adjust cadences to match your workflow. The agents respect quiet hours configured in `.env`.

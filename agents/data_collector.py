@@ -3,12 +3,16 @@
 Accepts raw content from external sources (email, files, web pages, notes),
 normalizes it via the LLM, chunks it for embedding, and stores everything
 in the memory system. Can be invoked directly with a file path or piped
-content, or called programmatically by other agents.
+content, called programmatically by other agents, or run as a cron job that
+watches an inbox directory for new files to ingest.
 """
 
 import json
 import logging
+import os
+import shutil
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -24,6 +28,23 @@ _MAX_LLM_INPUT = 15_000
 
 # Target chunk size in characters (roughly 500-1500 tokens).
 _DEFAULT_CHUNK_SIZE = 3000
+
+# Project root (one level up from agents/).
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+# File extensions considered text-readable for inbox scanning.
+_TEXT_EXTENSIONS = {".txt", ".md", ".json", ".csv", ".html", ".eml", ".pdf"}
+
+# Map file extension to source_type for ingestion.
+_EXT_SOURCE_TYPE = {
+    ".eml": "email",
+    ".html": "web",
+    ".md": "note",
+    ".txt": "note",
+    ".json": "record",
+    ".csv": "record",
+    ".pdf": "file",
+}
 
 
 class DataCollectorAgent(QuorumAgent):
@@ -217,10 +238,99 @@ class DataCollectorAgent(QuorumAgent):
         return doc_id
 
     # ------------------------------------------------------------------
+    # Inbox directory scanning
+    # ------------------------------------------------------------------
+
+    def _get_inbox_dir(self) -> Path:
+        """Return the inbox directory path from config or default."""
+        return Path(os.getenv("DATA_INBOX_DIR", str(_PROJECT_ROOT / "data" / "inbox")))
+
+    def _get_processed_dir(self) -> Path:
+        """Return the processed directory path from config or default."""
+        return Path(os.getenv("DATA_PROCESSED_DIR", str(_PROJECT_ROOT / "data" / "processed")))
+
+    def scan_inbox(self) -> list[str]:
+        """Scan the inbox directory and queue any text-readable files for ingestion.
+
+        Returns a list of filenames that were queued.
+        """
+        inbox_dir = self._get_inbox_dir()
+        processed_dir = self._get_processed_dir()
+
+        # Create directories if they don't exist.
+        inbox_dir.mkdir(parents=True, exist_ok=True)
+        processed_dir.mkdir(parents=True, exist_ok=True)
+
+        queued_files: list[str] = []
+
+        for file_path in sorted(inbox_dir.iterdir()):
+            # Skip directories, hidden files, and .gitkeep.
+            if not file_path.is_file():
+                continue
+            if file_path.name.startswith("."):
+                continue
+
+            # Only process known text-readable extensions.
+            ext = file_path.suffix.lower()
+            if ext not in _TEXT_EXTENSIONS:
+                logger.debug("Skipping non-text file: %s", file_path.name)
+                continue
+
+            try:
+                content = file_path.read_text(errors="replace")
+            except Exception as exc:
+                logger.warning("Could not read file %s: %s", file_path.name, exc)
+                continue
+
+            if not content.strip():
+                logger.debug("Skipping empty file: %s", file_path.name)
+                continue
+
+            source_type = _EXT_SOURCE_TYPE.get(ext, "file")
+            now_iso = datetime.now(timezone.utc).isoformat()
+
+            source_meta = {
+                "filename": file_path.name,
+                "file_path": str(file_path.resolve()),
+                "file_size": file_path.stat().st_size,
+                "ingested_at": now_iso,
+            }
+
+            self.queue_item(
+                source_type=source_type,
+                raw_content=content,
+                source_metadata=source_meta,
+            )
+            queued_files.append(file_path.name)
+            logger.info("Queued inbox file: %s (type=%s)", file_path.name, source_type)
+
+        return queued_files
+
+    def _move_to_processed(self, queued_files: list[str]) -> None:
+        """Move successfully ingested files from inbox to processed directory."""
+        inbox_dir = self._get_inbox_dir()
+        processed_dir = self._get_processed_dir()
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+
+        for filename in queued_files:
+            src = inbox_dir / filename
+            if not src.exists():
+                continue
+            # Prefix with timestamp to avoid name collisions.
+            dest = processed_dir / f"{timestamp}_{filename}"
+            shutil.move(str(src), str(dest))
+            logger.info("Moved to processed: %s -> %s", filename, dest.name)
+
+    # ------------------------------------------------------------------
     # Main run
     # ------------------------------------------------------------------
 
     def run(self) -> str:
+        # If nothing is pre-queued, scan the inbox directory for files.
+        inbox_files: list[str] = []
+        if not self._pending_items:
+            inbox_files = self.scan_inbox()
+
         if not self._pending_items:
             logger.info("No items queued for ingestion.")
             return "No items to ingest."
@@ -238,6 +348,11 @@ class DataCollectorAgent(QuorumAgent):
                 failed += 1
 
         self._pending_items.clear()
+
+        # Move inbox files to processed directory after successful ingestion.
+        if inbox_files:
+            self._move_to_processed(inbox_files)
+
         summary = f"Ingested {ingested} items, {failed} failures."
         logger.info(summary)
         return summary
@@ -288,6 +403,33 @@ if __name__ == "__main__":
         else:
             logger.info("Empty input, nothing to ingest.")
     else:
-        print("Usage:")
-        print("  python agents/data_collector.py <file_path>")
-        print("  echo 'some text' | python agents/data_collector.py")
+        # Interactive mode OR cron mode (no args, no piped input).
+        # Scan the inbox directory for files to ingest.
+        agent = DataCollectorAgent()
+        inbox_dir = agent._get_inbox_dir()
+        processed_dir = agent._get_processed_dir()
+
+        if sys.stdout.isatty():
+            print("Data Collector - Inbox Scanner")
+            print(f"  Inbox directory:     {inbox_dir}")
+            print(f"  Processed directory: {processed_dir}")
+            print()
+
+        inbox_files = agent.scan_inbox()
+
+        if inbox_files:
+            if sys.stdout.isatty():
+                print(f"Found {len(inbox_files)} file(s) to ingest:")
+                for f in inbox_files:
+                    print(f"  - {f}")
+                print()
+            result = agent.execute()
+        else:
+            if sys.stdout.isatty():
+                print("No files found in inbox. Drop files into the inbox directory")
+                print("and run again, or set up a cron job to scan automatically:")
+                print()
+                print("  */30 * * * * cd /path/to/the-quorum && python agents/data_collector.py")
+            else:
+                # Cron mode -- just run silently; execute() handles the "nothing to do" case.
+                agent.execute()
