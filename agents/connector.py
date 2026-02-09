@@ -1,0 +1,169 @@
+"""The Connector -- finds hidden relationships between pieces of information.
+
+Scans recent conversation turns that haven't been processed, searches memory
+for related past documents and events, and surfaces non-obvious connections
+as events.
+"""
+
+import json
+import logging
+import os
+from pathlib import Path
+from typing import Optional
+
+import psycopg2.extras
+
+from agents.base import QuorumAgent
+
+logger = logging.getLogger("quorum.connector")
+
+# Load the system prompt from the prompts directory.
+_PROMPT_PATH = Path(__file__).parent / "prompts" / "connector.txt"
+SYSTEM_PROMPT = _PROMPT_PATH.read_text() if _PROMPT_PATH.exists() else ""
+
+# Minimum cosine-similarity score to consider a match relevant.
+_MIN_SCORE = 0.35
+
+# How many recent turns to process per run.
+_BATCH_SIZE = 50
+
+
+class ConnectorAgent(QuorumAgent):
+    """Surfaces connections between recent conversation turns and stored memory."""
+
+    def __init__(self):
+        super().__init__("connector")
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _get_unprocessed_turns(self, limit: int = _BATCH_SIZE) -> list[dict]:
+        """Fetch recent conversation turns that the Connector has not yet examined.
+
+        We track processing by looking at events created by this agent:
+        any turn whose ID already appears in a connection event's ref_ids
+        is considered processed.
+        """
+        conn = self.connect_db()
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        cur.execute(
+            """
+            SELECT ct.*
+            FROM conversation_turns ct
+            WHERE ct.id NOT IN (
+                SELECT UNNEST(ref_ids) FROM events
+                WHERE actor = 'connector' AND event_type = 'connection'
+            )
+            ORDER BY ct.created_at DESC
+            LIMIT %s
+            """,
+            [limit],
+        )
+        rows = cur.fetchall()
+        cur.close()
+        return [dict(r) for r in rows]
+
+    def _build_llm_payload(self, turn: dict, candidates: list[dict]) -> str:
+        """Assemble the user-message payload for the LLM."""
+        payload = {
+            "turn": {
+                "id": str(turn["id"]),
+                "role": turn["role"],
+                "content": turn["content"],
+                "created_at": turn["created_at"].isoformat() if turn.get("created_at") else None,
+            },
+            "candidates": [
+                {
+                    "ref_type": c["ref_type"],
+                    "ref_id": str(c["ref_id"]),
+                    "score": round(c["score"], 4),
+                    "title": c.get("title", ""),
+                    "content": (c.get("content") or "")[:1000],
+                }
+                for c in candidates
+            ],
+        }
+        return json.dumps(payload, default=str)
+
+    def _parse_llm_response(self, raw: str) -> list[dict]:
+        """Parse the LLM response into a list of connection dicts."""
+        # Strip markdown code fences if present.
+        cleaned = raw.strip()
+        if cleaned.startswith("```"):
+            cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else cleaned[3:]
+        if cleaned.endswith("```"):
+            cleaned = cleaned[:-3]
+        cleaned = cleaned.strip()
+
+        try:
+            connections = json.loads(cleaned)
+        except json.JSONDecodeError:
+            logger.warning("Failed to parse LLM response as JSON: %s", raw[:200])
+            return []
+
+        if not isinstance(connections, list):
+            return []
+        return connections
+
+    # ------------------------------------------------------------------
+    # Main run
+    # ------------------------------------------------------------------
+
+    def run(self) -> str:
+        turns = self._get_unprocessed_turns()
+        if not turns:
+            logger.info("No unprocessed turns found.")
+            return "No unprocessed turns."
+
+        total_connections = 0
+
+        for turn in turns:
+            # Search memory for content related to this turn.
+            candidates = self.search_memory(
+                turn["content"][:2000], limit=15, ref_type=None
+            )
+
+            # Filter out low-relevance hits and the turn itself.
+            candidates = [
+                c
+                for c in candidates
+                if c["score"] >= _MIN_SCORE and str(c["ref_id"]) != str(turn["id"])
+            ]
+
+            if not candidates:
+                continue
+
+            # Ask the LLM to find non-obvious connections.
+            payload = self._build_llm_payload(turn, candidates)
+            raw_response = self.call_llm(SYSTEM_PROMPT, payload)
+            connections = self._parse_llm_response(raw_response)
+
+            for conn_data in connections:
+                confidence = conn_data.get("confidence", 0)
+                if confidence < 0.5:
+                    continue
+
+                related_ids = [str(turn["id"])] + [
+                    str(rid) for rid in conn_data.get("related_ids", [])
+                ]
+
+                self.store_event(
+                    event_type="connection",
+                    title=conn_data.get("title", "Untitled connection"),
+                    description=conn_data.get("description", ""),
+                    metadata={"confidence": confidence},
+                    ref_ids=related_ids,
+                )
+                total_connections += 1
+
+        summary = f"Processed {len(turns)} turns, created {total_connections} connections."
+        logger.info(summary)
+        return summary
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+    agent = ConnectorAgent()
+    agent.execute()

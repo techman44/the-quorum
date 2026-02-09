@@ -1,0 +1,18 @@
+version: '3.8'
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    container_name: quorum-db
+    environment:
+      POSTGRES_USER: ${DB_USER:-quorum}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-changeme}
+      POSTGRES_DB: ${DB_NAME:-quorum}
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - quorum_data:/var/lib/postgresql/data
+      - ./schema:/docker-entrypoint-initdb.d
+    restart: unless-stopped
+
+volumes:
+  quorum_data:
