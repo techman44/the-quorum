@@ -121,6 +121,50 @@ class StrategistAgent(QuorumAgent):
         return [dict(r) for r in rows]
 
     # ------------------------------------------------------------------
+    # Cross-agent context
+    # ------------------------------------------------------------------
+
+    def _get_all_agent_activity(self) -> dict:
+        """Gather recent events from ALL other agents, organized by agent."""
+        all_events = self.get_other_agent_events(
+            agent_names=["connector", "executor", "devils_advocate", "opportunist"],
+            hours=self.lookback_hours,
+            limit=40,
+        )
+
+        # Also fetch recent documents from other agents (summaries, reflections, etc.)
+        agent_docs = self.get_other_agent_documents(
+            sources=["connector", "executor", "devils_advocate", "opportunist"],
+            hours=self.lookback_hours,
+            limit=10,
+        )
+
+        # Organize events by agent for clarity.
+        by_agent: dict[str, list[dict]] = {}
+        for evt in all_events:
+            actor = evt.get("actor", "unknown")
+            by_agent.setdefault(actor, []).append({
+                "event_type": evt.get("event_type", ""),
+                "title": evt.get("title", ""),
+                "description": (evt.get("description") or "")[:500],
+                "created_at": evt["created_at"].isoformat() if evt.get("created_at") else None,
+            })
+
+        return {
+            "agent_events_by_source": by_agent,
+            "agent_documents": [
+                {
+                    "source": d.get("source", ""),
+                    "doc_type": d.get("doc_type", ""),
+                    "title": d.get("title", ""),
+                    "content_preview": (d.get("content_preview") or "")[:500],
+                    "created_at": d["created_at"].isoformat() if d.get("created_at") else None,
+                }
+                for d in agent_docs
+            ],
+        }
+
+    # ------------------------------------------------------------------
     # LLM interaction
     # ------------------------------------------------------------------
 
@@ -129,6 +173,7 @@ class StrategistAgent(QuorumAgent):
         events = self._recent_events()
         tasks = self._task_snapshot()
         conversations = self._conversation_summaries()
+        cross_agent_context = self._get_all_agent_activity()
 
         return json.dumps(
             {
@@ -138,6 +183,7 @@ class StrategistAgent(QuorumAgent):
                 "events": events,
                 "tasks": tasks,
                 "conversations": conversations,
+                "cross_agent_context": cross_agent_context,
             },
             default=str,
         )
@@ -161,6 +207,7 @@ class StrategistAgent(QuorumAgent):
     # ------------------------------------------------------------------
 
     def run(self) -> str:
+        logger.info("Building payload with cross-agent context from all Quorum agents.")
         payload = self._build_payload()
         raw = self.call_llm(SYSTEM_PROMPT, payload)
         parsed = self._parse_response(raw)

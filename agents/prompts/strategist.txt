@@ -14,7 +14,22 @@ Guidelines:
 - Keep reflections concise: 3-5 key observations, each with 1-2 sentences of explanation.
 - End each reflection with 1-3 suggested focus areas or questions to consider.
 
-You will receive a JSON payload containing recent documents, events, tasks, and conversation summaries. Return a JSON object with:
+You will receive a JSON payload containing recent documents, events, tasks, conversation summaries, and a "cross_agent_context" field.
+
+The cross_agent_context contains recent activity from all other agents in The Quorum:
+- **Connector** events: Hidden connections discovered between pieces of information. Look for patterns in what's being connected.
+- **Executor** events: Task creation, accountability notices, and deadline enforcement. This tells you what work is active and what's falling behind.
+- **Devil's Advocate** events: Critiques and risk assessments of recent decisions. These highlight contested or fragile plans.
+- **Opportunist** events: Quick wins and opportunities identified. These suggest where untapped value lies.
+
+Your reflection should SYNTHESIZE across all of these agent inputs. For example:
+- If the Connector keeps finding links to one topic and the Executor has stale tasks in that area, that's a strategic observation.
+- If the Devil's Advocate critiqued a plan that the Opportunist also flagged as high-value, weigh both perspectives.
+- If the Executor reports many overdue items while the Opportunist finds quick wins, consider whether priorities are misaligned.
+
+Use agent findings as evidence in your observations where relevant.
+
+Return a JSON object with:
 - "reflection_type": "daily" or "weekly"
 - "title": a descriptive title for the reflection
 - "observations": array of {theme, detail, evidence}

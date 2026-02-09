@@ -112,16 +112,82 @@ class OpportunistAgent(QuorumAgent):
         return [dict(r) for r in rows]
 
     # ------------------------------------------------------------------
+    # Cross-agent context
+    # ------------------------------------------------------------------
+
+    def _get_connector_insights(self) -> list[dict]:
+        """Fetch recent connections from the Connector agent."""
+        return self.get_other_agent_events(
+            agent_names=["connector"],
+            hours=self.lookback_hours,
+            limit=10,
+        )
+
+    def _get_executor_activity(self) -> list[dict]:
+        """Fetch recent Executor events (task creation, accountability)."""
+        return self.get_other_agent_events(
+            agent_names=["executor"],
+            hours=self.lookback_hours,
+            limit=10,
+        )
+
+    def _get_strategist_reflections(self) -> list[dict]:
+        """Fetch recent Strategist reflection documents."""
+        return self.get_other_agent_documents(
+            sources=["strategist"],
+            hours=self.lookback_hours,
+            limit=5,
+        )
+
+    # ------------------------------------------------------------------
     # LLM interaction
     # ------------------------------------------------------------------
 
     def _build_payload(self) -> str:
+        connector_insights = self._get_connector_insights()
+        executor_activity = self._get_executor_activity()
+        strategist_reflections = self._get_strategist_reflections()
+
+        if connector_insights:
+            logger.info("Loaded %d Connector insights for opportunity context.", len(connector_insights))
+        if executor_activity:
+            logger.info("Loaded %d Executor events for opportunity context.", len(executor_activity))
+        if strategist_reflections:
+            logger.info("Loaded %d Strategist reflections for opportunity context.", len(strategist_reflections))
+
         return json.dumps(
             {
                 "documents": self._recent_documents(),
                 "events": self._recent_events(),
                 "tasks": self._open_tasks(),
                 "conversation_context": self._recent_conversation_context(),
+                "connector_insights": [
+                    {
+                        "title": c.get("title", ""),
+                        "description": (c.get("description") or "")[:500],
+                        "event_type": c.get("event_type", ""),
+                        "created_at": c["created_at"].isoformat() if c.get("created_at") else None,
+                    }
+                    for c in connector_insights
+                ],
+                "executor_activity": [
+                    {
+                        "title": e.get("title", ""),
+                        "description": (e.get("description") or "")[:500],
+                        "event_type": e.get("event_type", ""),
+                        "created_at": e["created_at"].isoformat() if e.get("created_at") else None,
+                    }
+                    for e in executor_activity
+                ],
+                "strategist_reflections": [
+                    {
+                        "title": r.get("title", ""),
+                        "content_preview": (r.get("content_preview") or "")[:500],
+                        "doc_type": r.get("doc_type", ""),
+                        "created_at": r["created_at"].isoformat() if r.get("created_at") else None,
+                    }
+                    for r in strategist_reflections
+                ],
             },
             default=str,
         )

@@ -8,6 +8,7 @@ as events.
 import json
 import logging
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -65,7 +66,15 @@ class ConnectorAgent(QuorumAgent):
         cur.close()
         return [dict(r) for r in rows]
 
-    def _build_llm_payload(self, turn: dict, candidates: list[dict]) -> str:
+    def _get_other_agent_context(self) -> list[dict]:
+        """Fetch recent findings from other agents to inform connection-finding."""
+        return self.get_other_agent_events(
+            agent_names=["executor", "strategist", "devils_advocate", "opportunist"],
+            hours=1,
+            limit=15,
+        )
+
+    def _build_llm_payload(self, turn: dict, candidates: list[dict], other_agent_findings: list[dict] = None) -> str:
         """Assemble the user-message payload for the LLM."""
         payload = {
             "turn": {
@@ -83,6 +92,16 @@ class ConnectorAgent(QuorumAgent):
                     "content": (c.get("content") or "")[:1000],
                 }
                 for c in candidates
+            ],
+            "other_agent_findings": [
+                {
+                    "agent": f.get("actor", ""),
+                    "event_type": f.get("event_type", ""),
+                    "title": f.get("title", ""),
+                    "description": (f.get("description") or "")[:500],
+                    "created_at": f["created_at"].isoformat() if f.get("created_at") else None,
+                }
+                for f in (other_agent_findings or [])
             ],
         }
         return json.dumps(payload, default=str)
@@ -117,7 +136,15 @@ class ConnectorAgent(QuorumAgent):
             logger.info("No unprocessed turns found.")
             return "No unprocessed turns."
 
+        # Gather recent findings from other agents to enrich connection-finding.
+        other_agent_findings = self._get_other_agent_context()
+        if other_agent_findings:
+            logger.info(
+                "Loaded %d recent findings from other agents.", len(other_agent_findings)
+            )
+
         total_connections = 0
+        all_connection_titles = []
 
         for turn in turns:
             # Search memory for content related to this turn.
@@ -135,8 +162,8 @@ class ConnectorAgent(QuorumAgent):
             if not candidates:
                 continue
 
-            # Ask the LLM to find non-obvious connections.
-            payload = self._build_llm_payload(turn, candidates)
+            # Ask the LLM to find non-obvious connections, including other agents' context.
+            payload = self._build_llm_payload(turn, candidates, other_agent_findings)
             raw_response = self.call_llm(SYSTEM_PROMPT, payload)
             connections = self._parse_llm_response(raw_response)
 
@@ -153,10 +180,27 @@ class ConnectorAgent(QuorumAgent):
                     event_type="connection",
                     title=conn_data.get("title", "Untitled connection"),
                     description=conn_data.get("description", ""),
-                    metadata={"confidence": confidence},
+                    metadata={"confidence": confidence, "source": "connector"},
                     ref_ids=related_ids,
                 )
                 total_connections += 1
+                all_connection_titles.append(conn_data.get("title", "Untitled"))
+
+        # Store a summary document so other agents can find what the Connector discovered.
+        if all_connection_titles:
+            summary_content = (
+                f"Connector auto-summary: processed {len(turns)} turns, "
+                f"found {total_connections} connections.\n\n"
+                "Connections found:\n"
+                + "\n".join(f"- {t}" for t in all_connection_titles)
+            )
+            self.store_document(
+                doc_type="summary",
+                title=f"Connector Run Summary ({datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')})",
+                content=summary_content,
+                metadata={"source": "connector", "connection_count": total_connections},
+                tags=["connector", "auto-summary"],
+            )
 
         summary = f"Processed {len(turns)} turns, created {total_connections} connections."
         logger.info(summary)

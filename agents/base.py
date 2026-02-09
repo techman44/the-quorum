@@ -289,6 +289,67 @@ class QuorumAgent:
         return str(task_id)
 
     # ------------------------------------------------------------------
+    # Cross-agent awareness
+    # ------------------------------------------------------------------
+
+    def get_other_agent_events(
+        self,
+        agent_names: list[str],
+        hours: int = 24,
+        limit: int = 20,
+    ) -> list[dict]:
+        """Fetch recent events created by other agents.
+
+        Returns a list of dicts with title, description, event_type, actor,
+        and created_at for events stored by the named agents within the
+        given lookback window.
+        """
+        conn = self.connect_db()
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute(
+            """
+            SELECT id, event_type, actor, title,
+                   LEFT(description, 2000) AS description,
+                   metadata, created_at
+            FROM events
+            WHERE actor = ANY(%s)
+              AND created_at > NOW() - make_interval(hours => %s)
+            ORDER BY created_at DESC
+            LIMIT %s
+            """,
+            [agent_names, hours, limit],
+        )
+        rows = cur.fetchall()
+        cur.close()
+        return [dict(r) for r in rows]
+
+    def get_other_agent_documents(
+        self,
+        sources: list[str],
+        hours: int = 24,
+        limit: int = 10,
+    ) -> list[dict]:
+        """Fetch recent documents created by other agents."""
+        conn = self.connect_db()
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute(
+            """
+            SELECT id, doc_type, source, title,
+                   LEFT(content, 1000) AS content_preview,
+                   tags, created_at
+            FROM documents
+            WHERE source = ANY(%s)
+              AND created_at > NOW() - make_interval(hours => %s)
+            ORDER BY created_at DESC
+            LIMIT %s
+            """,
+            [sources, hours, limit],
+        )
+        rows = cur.fetchall()
+        cur.close()
+        return [dict(r) for r in rows]
+
+    # ------------------------------------------------------------------
     # LLM inference
     # ------------------------------------------------------------------
 

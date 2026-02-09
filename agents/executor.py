@@ -133,6 +133,26 @@ class ExecutorAgent(QuorumAgent):
         return [dict(r) for r in rows]
 
     # ------------------------------------------------------------------
+    # Cross-agent context
+    # ------------------------------------------------------------------
+
+    def _get_connector_insights(self) -> list[dict]:
+        """Fetch recent connection events from the Connector agent."""
+        return self.get_other_agent_events(
+            agent_names=["connector"],
+            hours=24,
+            limit=15,
+        )
+
+    def _get_opportunist_findings(self) -> list[dict]:
+        """Fetch recent opportunity events from the Opportunist agent."""
+        return self.get_other_agent_events(
+            agent_names=["opportunist"],
+            hours=24,
+            limit=10,
+        )
+
+    # ------------------------------------------------------------------
     # LLM interaction
     # ------------------------------------------------------------------
 
@@ -141,6 +161,8 @@ class ExecutorAgent(QuorumAgent):
         turns: list[dict],
         events: list[dict],
         tasks: list[dict],
+        connector_insights: list[dict] = None,
+        opportunist_findings: list[dict] = None,
     ) -> str:
         """Build a JSON payload for the LLM."""
 
@@ -163,6 +185,8 @@ class ExecutorAgent(QuorumAgent):
                 "recent_turns": _serialize(turns),
                 "recent_events": _serialize(events),
                 "open_tasks": _serialize(tasks),
+                "connector_insights": _serialize(connector_insights or []),
+                "opportunist_findings": _serialize(opportunist_findings or []),
             },
             default=str,
         )
@@ -273,6 +297,14 @@ class ExecutorAgent(QuorumAgent):
         events = self._recent_events()
         tasks = self._open_tasks()
 
+        # Gather cross-agent context: Connector insights and Opportunist quick wins.
+        connector_insights = self._get_connector_insights()
+        opportunist_findings = self._get_opportunist_findings()
+        if connector_insights:
+            logger.info("Loaded %d Connector insights for context.", len(connector_insights))
+        if opportunist_findings:
+            logger.info("Loaded %d Opportunist findings for context.", len(opportunist_findings))
+
         # Phase 1: accountability for overdue / stale tasks (rule-based, no LLM needed).
         accountability_count = self._create_accountability_events()
 
@@ -280,7 +312,7 @@ class ExecutorAgent(QuorumAgent):
         created = 0
         updated = 0
         if turns or events:
-            payload = self._build_payload(turns, events, tasks)
+            payload = self._build_payload(turns, events, tasks, connector_insights, opportunist_findings)
             raw = self.call_llm(SYSTEM_PROMPT, payload)
             parsed = self._parse_response(raw)
 

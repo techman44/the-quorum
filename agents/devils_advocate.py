@@ -80,10 +80,32 @@ class DevilsAdvocateAgent(QuorumAgent):
         return [dict(r) for r in rows]
 
     # ------------------------------------------------------------------
+    # Cross-agent context
+    # ------------------------------------------------------------------
+
+    def _get_connector_connections(self) -> list[dict]:
+        """Fetch recent connections from the Connector agent."""
+        return self.get_other_agent_events(
+            agent_names=["connector"],
+            hours=self.lookback_hours,
+            limit=10,
+        )
+
+    def _get_strategist_reflections(self) -> list[dict]:
+        """Fetch recent reflection documents from the Strategist agent."""
+        return self.get_other_agent_documents(
+            sources=["strategist"],
+            hours=self.lookback_hours,
+            limit=5,
+        )
+
+    # ------------------------------------------------------------------
     # LLM interaction
     # ------------------------------------------------------------------
 
-    def _build_payload(self, decisions: list[dict], tasks: list[dict]) -> str:
+    def _build_payload(self, decisions: list[dict], tasks: list[dict],
+                       connector_connections: list[dict] = None,
+                       strategist_reflections: list[dict] = None) -> str:
         return json.dumps(
             {
                 "decisions_and_plans": [
@@ -106,6 +128,24 @@ class DevilsAdvocateAgent(QuorumAgent):
                         "owner": t.get("owner"),
                     }
                     for t in tasks
+                ],
+                "connector_connections": [
+                    {
+                        "title": c.get("title", ""),
+                        "description": (c.get("description") or "")[:500],
+                        "event_type": c.get("event_type", ""),
+                        "created_at": c["created_at"].isoformat() if c.get("created_at") else None,
+                    }
+                    for c in (connector_connections or [])
+                ],
+                "strategist_reflections": [
+                    {
+                        "title": r.get("title", ""),
+                        "content_preview": (r.get("content_preview") or "")[:500],
+                        "doc_type": r.get("doc_type", ""),
+                        "created_at": r["created_at"].isoformat() if r.get("created_at") else None,
+                    }
+                    for r in (strategist_reflections or [])
                 ],
             },
             default=str,
@@ -137,11 +177,19 @@ class DevilsAdvocateAgent(QuorumAgent):
         decisions = self._recent_decisions_and_plans()
         tasks = self._recent_high_priority_tasks()
 
-        if not decisions and not tasks:
-            logger.info("No recent decisions or high-priority tasks to critique.")
+        # Gather cross-agent context: Connector connections and Strategist reflections.
+        connector_connections = self._get_connector_connections()
+        strategist_reflections = self._get_strategist_reflections()
+        if connector_connections:
+            logger.info("Loaded %d Connector connections for critique context.", len(connector_connections))
+        if strategist_reflections:
+            logger.info("Loaded %d Strategist reflections for critique context.", len(strategist_reflections))
+
+        if not decisions and not tasks and not connector_connections and not strategist_reflections:
+            logger.info("No recent decisions, tasks, connections, or reflections to critique.")
             return "Nothing to critique."
 
-        payload = self._build_payload(decisions, tasks)
+        payload = self._build_payload(decisions, tasks, connector_connections, strategist_reflections)
         raw = self.call_llm(SYSTEM_PROMPT, payload)
         critiques = self._parse_response(raw)
 
