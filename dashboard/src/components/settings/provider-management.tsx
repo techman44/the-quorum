@@ -604,20 +604,20 @@ export function ProviderManagement({ initialProviders }: ProviderManagementProps
           </DialogHeader>
 
           <div className="space-y-4 py-4">
-            {/* Step 1: Set up SSH port forwarding */}
+            {/* Step 1: Run the local OAuth callback server */}
             <div className="rounded-lg bg-muted p-4 text-sm border border-border">
               <div className="flex items-center gap-2 mb-3">
                 <div className="flex items-center justify-center w-6 h-6 rounded-full bg-primary text-primary-foreground text-xs font-bold">1</div>
-                <p className="font-medium">Set up SSH port forwarding</p>
+                <p className="font-medium">Run the OAuth callback server locally</p>
               </div>
               <p className="text-muted-foreground mb-3 ml-8">
-                OpenAI's OAuth callback server is running on the Quorum server. Forward it to your local machine:
+                In a terminal on your machine, run:
               </p>
               <div className="ml-8 p-3 bg-background rounded-md border border-border">
-                <code className="text-xs text-foreground break-all">ssh -L 1455:localhost:1455 root@192.168.20.36 -N</code>
+                <code className="text-xs text-foreground break-all">node /path/to/quorum/dashboard/scripts/oauth-local-callback.js</code>
               </div>
               <p className="text-xs text-muted-foreground mt-2 ml-8">
-                Keep this SSH connection running while you complete the authorization.
+                Keep this server running while you complete the authorization.
               </p>
             </div>
 
@@ -628,7 +628,7 @@ export function ProviderManagement({ initialProviders }: ProviderManagementProps
                 <p className="font-medium">Open OpenAI authorization</p>
               </div>
               <p className="text-muted-foreground mb-3 ml-8">
-                After setting up port forwarding, click the button below to authorize:
+                After starting the callback server, click the button below to authorize:
               </p>
               <div className="ml-8">
                 <Button onClick={() => {
