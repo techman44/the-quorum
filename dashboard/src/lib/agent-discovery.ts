@@ -13,7 +13,37 @@ import { AgentMetadata, DEFAULT_AGENTS, agentToRosterEntry, AgentRosterEntry, ge
 // In-memory cache of discovered agents
 let agentCache: AgentMetadata[] | null = null;
 let cacheTimestamp: number = 0;
+let tableInitialized = false;
 const CACHE_TTL = 60000; // 1 minute
+
+/**
+ * Ensure the agents table exists
+ */
+export async function ensureAgentsTable(): Promise<void> {
+  if (tableInitialized) return;
+
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS quorum_agents (
+        id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+        name TEXT NOT NULL UNIQUE,
+        config JSONB NOT NULL DEFAULT '{}',
+        enabled BOOLEAN DEFAULT true,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_quorum_agents_name ON quorum_agents(name)
+    `);
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_quorum_agents_enabled ON quorum_agents(enabled)
+    `);
+    tableInitialized = true;
+  } catch (error) {
+    console.error('Failed to create agents table:', error);
+  }
+}
 
 /**
  * Get all enabled agents (with caching)
@@ -28,6 +58,9 @@ export async function discoverAgents(): Promise<AgentMetadata[]> {
 
   // Start with default agents
   const agents: AgentMetadata[] = [...DEFAULT_AGENTS];
+
+  // Ensure table exists
+  await ensureAgentsTable();
 
   // Load custom agent configurations from database
   try {
