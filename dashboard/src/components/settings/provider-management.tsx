@@ -604,31 +604,14 @@ export function ProviderManagement({ initialProviders }: ProviderManagementProps
           </DialogHeader>
 
           <div className="space-y-4 py-4">
-            {/* Step 1: Run the local OAuth callback server */}
+            {/* Step 1: Open authorization */}
             <div className="rounded-lg bg-muted p-4 text-sm border border-border">
               <div className="flex items-center gap-2 mb-3">
                 <div className="flex items-center justify-center w-6 h-6 rounded-full bg-primary text-primary-foreground text-xs font-bold">1</div>
-                <p className="font-medium">Run the OAuth callback server locally</p>
-              </div>
-              <p className="text-muted-foreground mb-3 ml-8">
-                In a terminal on your machine, run:
-              </p>
-              <div className="ml-8 p-3 bg-background rounded-md border border-border">
-                <code className="text-xs text-foreground break-all">node /path/to/quorum/dashboard/scripts/oauth-local-callback.js</code>
-              </div>
-              <p className="text-xs text-muted-foreground mt-2 ml-8">
-                Keep this server running while you complete the authorization.
-              </p>
-            </div>
-
-            {/* Step 2: Open authorization */}
-            <div className="rounded-lg bg-muted p-4 text-sm border border-border">
-              <div className="flex items-center gap-2 mb-3">
-                <div className="flex items-center justify-center w-6 h-6 rounded-full bg-primary text-primary-foreground text-xs font-bold">2</div>
                 <p className="font-medium">Open OpenAI authorization</p>
               </div>
               <p className="text-muted-foreground mb-3 ml-8">
-                After starting the callback server, click the button below to authorize:
+                Click the button below to open the authorization page:
               </p>
               <div className="ml-8">
                 <Button onClick={() => {
@@ -647,29 +630,20 @@ export function ProviderManagement({ initialProviders }: ProviderManagementProps
               </div>
             </div>
 
-            {/* Step 3: Complete sign in */}
+            {/* Step 2: Copy redirect URL and paste */}
             <div className="rounded-lg bg-muted p-4 text-sm border border-border">
               <div className="flex items-center gap-2 mb-3">
-                <div className="flex items-center justify-center w-6 h-6 rounded-full bg-primary text-primary-foreground text-xs font-bold">3</div>
-                <p className="font-medium">Complete sign in</p>
+                <div className="flex items-center justify-center w-6 h-6 rounded-full bg-primary text-primary-foreground text-xs font-bold">2</div>
+                <p className="font-medium">Paste the redirect URL</p>
               </div>
-              <ol className="list-decimal list-inside space-y-1 text-muted-foreground ml-8">
+              <ol className="list-decimal list-inside space-y-2 text-muted-foreground ml-8">
                 <li>Sign in with your ChatGPT account in the popup</li>
                 <li>Authorize the application</li>
-                <li>You'll see a success page when done</li>
-                <li>Return here to refresh your provider list</li>
+                <li>You'll be redirected to a page that doesn't load</li>
+                <li>Copy the <strong>full URL</strong> from your browser's address bar</li>
+                <li>Paste it in the box below and click Submit</li>
               </ol>
-            </div>
-
-            {/* Fallback: Manual URL paste */}
-            <details className="rounded-lg bg-muted p-4 text-sm border border-border">
-              <summary className="cursor-pointer font-medium text-muted-foreground hover:text-foreground">
-                Having trouble? Click to paste redirect URL manually
-              </summary>
-              <div className="mt-3 space-y-2">
-                <p className="text-xs text-muted-foreground">
-                  If the automatic flow doesn't work, copy the URL from your browser after authorizing and paste it below:
-                </p>
+              <div className="ml-8 mt-3">
                 <Input
                   placeholder="http://127.0.0.1:1455/auth/callback?code=..."
                   value={manualAuthUrl}
@@ -677,7 +651,7 @@ export function ProviderManagement({ initialProviders }: ProviderManagementProps
                   disabled={isSubmittingManual}
                 />
                 <Button
-                  variant="outline"
+                  className="mt-2"
                   onClick={async () => {
                     if (!manualAuthUrl.trim()) return;
                     setIsSubmittingManual(true);
@@ -691,17 +665,41 @@ export function ProviderManagement({ initialProviders }: ProviderManagementProps
 
                       const result = await response.json();
 
-                      if (result.success) {
+                      if (result.success || response.ok) {
                         setShowManualOAuth(false);
                         setManualAuthUrl('');
-                        window.location.reload();
+                        setOAuthStatus({ status: 'success', message: 'OpenAI account connected successfully!' });
+                        // Reload providers after a short delay
+                        setTimeout(() => window.location.reload(), 1500);
                       } else {
-                        setOAuthStatus({
-                          status: 'error',
-                          message: result.error || 'Failed to complete OAuth',
-                        });
+                        setOAuthStatus({ status: 'error', message: result.error || 'Failed to connect account' });
                       }
                     } catch (error) {
+                      setOAuthStatus({ status: 'error', message: 'Failed to connect account' });
+                    } finally {
+                      setIsSubmittingManual(false);
+                    }
+                  }}
+                  disabled={isSubmittingManual || !manualAuthUrl.trim()}
+                >
+                  {isSubmittingManual ? 'Connecting...' : 'Submit'}
+                </Button>
+              </div>
+            </div>
+
+            {/* Success message */}
+            {oauthStatus.status === 'success' && (
+              <div className="rounded-lg bg-green-950 border border-green-800 p-4 text-sm">
+                <p className="text-green-200">✓ {oauthStatus.message}</p>
+              </div>
+            )}
+
+            {/* Error message */}
+            {oauthStatus.status === 'error' && (
+              <div className="rounded-lg bg-red-950 border border-red-800 p-4 text-sm">
+                <p className="text-red-200">✗ {oauthStatus.message}</p>
+              </div>
+            )}
                       setOAuthStatus({
                         status: 'error',
                         message: error instanceof Error ? error.message : 'Failed to complete OAuth',
