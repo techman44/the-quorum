@@ -1,0 +1,14 @@
+services:
+  quorum-dashboard:
+    build: .
+    container_name: quorum-dashboard
+    network_mode: host
+    environment:
+      - QUORUM_DB_HOST=localhost
+      - QUORUM_DB_PORT=5432
+      - QUORUM_DB_NAME=quorum
+      - QUORUM_DB_USER=quorum
+      - QUORUM_DB_PASSWORD=${QUORUM_DB_PASSWORD:-}
+      - OLLAMA_HOST=http://localhost:11434
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+    restart: unless-stopped

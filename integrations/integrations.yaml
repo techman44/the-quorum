@@ -1,0 +1,156 @@
+# The Quorum - Integration Configuration
+# Enable the integrations you want your agents to access.
+# Each integration expands what your agents can observe and act on.
+#
+# To enable an integration:
+#   1. Set enabled: true
+#   2. Set the required environment variables in your .env file
+#   3. Run: python -m integrations.loader  (to verify)
+#
+# To manage integrations interactively:
+#   ./scripts/manage_integrations.sh list
+#   ./scripts/manage_integrations.sh enable <name>
+#   ./scripts/manage_integrations.sh disable <name>
+#   ./scripts/manage_integrations.sh check
+
+integrations:
+
+  gmail:
+    enabled: false
+    description: "Email ingestion - agents can search and reference your email history"
+    benefit: "The Connector can find relevant past conversations. The Executor can create tasks from emails. The Opportunist can spot forgotten follow-ups."
+    agents: [connector, executor, opportunist, data_collector]
+    setup:
+      credentials_type: "oauth2"
+      instructions: "See docs/integrations.md for OAuth setup"
+    config:
+      max_emails_per_sync: 100
+      sync_interval_minutes: 30
+      labels_to_sync: ["INBOX", "SENT"]
+
+  calendar:
+    enabled: false
+    description: "Calendar awareness - agents know about your schedule"
+    benefit: "The Strategist can plan around your commitments. The Executor can set task deadlines relative to meetings. The Connector can link conversations to upcoming events."
+    agents: [strategist, executor, connector]
+    setup:
+      credentials_type: "oauth2"
+      instructions: "See docs/integrations.md for setup"
+    config:
+      provider: "google"  # google, outlook, caldav
+      lookahead_days: 14
+
+  slack:
+    enabled: false
+    description: "Slack message ingestion - agents can reference team conversations"
+    benefit: "The Connector links Slack threads to your documents and decisions. The Executor extracts action items from channels."
+    agents: [connector, executor, data_collector]
+    setup:
+      credentials_type: "bot_token"
+      env_var: "SLACK_BOT_TOKEN"
+      instructions: "Create a Slack app, add to workspace, set SLACK_BOT_TOKEN in .env"
+    config:
+      channels_to_watch: []
+      sync_interval_minutes: 15
+
+  telegram:
+    enabled: false
+    description: "Telegram notifications - agents can notify you via Telegram"
+    benefit: "Get proactive alerts when agents find something important. The Executor can ping you about overdue tasks. The Connector can surface relevant history in real-time."
+    agents: [connector, executor, strategist, devils_advocate, opportunist]
+    setup:
+      credentials_type: "bot_token"
+      env_var: "TELEGRAM_BOT_TOKEN"
+      instructions: "Create a bot via @BotFather, set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in .env"
+    config:
+      notify_on: ["accountability", "connection", "opportunity", "critique"]
+      respect_quiet_hours: true
+
+  paperless:
+    enabled: false
+    description: "Paperless-NGX document sync - agents can reference your scanned documents"
+    benefit: "The Data Collector automatically ingests OCR'd documents. The Connector can link conversations to physical documents. The Strategist can reference receipts, contracts, and records."
+    agents: [data_collector, connector, strategist]
+    setup:
+      credentials_type: "api_token"
+      env_var: "PAPERLESS_API_TOKEN"
+      instructions: "Set PAPERLESS_URL and PAPERLESS_API_TOKEN in .env"
+    config:
+      sync_interval_minutes: 60
+      document_types: []  # empty = all types
+
+  obsidian:
+    enabled: false
+    description: "Obsidian vault indexing - agents can search your notes"
+    benefit: "The Connector links conversations to your personal knowledge base. The Strategist can reference notes during reflections."
+    agents: [data_collector, connector, strategist]
+    setup:
+      credentials_type: "filesystem"
+      instructions: "Set OBSIDIAN_VAULT_PATH in .env to your vault directory"
+    config:
+      vault_path: ""
+      index_interval_hours: 6
+      file_types: [".md"]
+
+  location:
+    enabled: false
+    description: "Location awareness via Dawarich or OwnTracks"
+    benefit: "Agents know where you are. The Strategist can factor location into daily planning. The Opportunist can suggest nearby opportunities."
+    agents: [strategist, opportunist]
+    setup:
+      credentials_type: "api_token"
+      env_var: "LOCATION_API_TOKEN"
+      instructions: "Set LOCATION_PROVIDER (dawarich/owntracks), LOCATION_URL, and LOCATION_API_TOKEN in .env"
+    config:
+      provider: "dawarich"  # dawarich, owntracks
+      check_interval_minutes: 60
+
+  weather:
+    enabled: false
+    description: "Weather data - agents can factor weather into planning"
+    benefit: "The Strategist considers weather in daily briefings. Good for outdoor activity planning and commute awareness."
+    agents: [strategist]
+    setup:
+      credentials_type: "none"
+      instructions: "Set WEATHER_LOCATION in .env (city name or coordinates)"
+    config:
+      provider: "wttr.in"  # free, no API key needed
+      location: ""
+
+  crm:
+    enabled: false
+    description: "CRM integration - agents can reference customer/contact data"
+    benefit: "The Connector links conversations to contacts. The Executor creates follow-up tasks for contacts. The Opportunist spots neglected relationships."
+    agents: [connector, executor, opportunist, data_collector]
+    setup:
+      credentials_type: "api_token"
+      env_var: "CRM_API_TOKEN"
+      instructions: "Set CRM_PROVIDER (hubspot/pipedrive/custom), CRM_URL, and CRM_API_TOKEN in .env"
+    config:
+      provider: ""  # hubspot, pipedrive, custom
+      sync_interval_minutes: 60
+
+  github:
+    enabled: false
+    description: "GitHub integration - agents can reference issues, PRs, and code"
+    benefit: "The Executor can create GitHub issues from tasks. The Connector links discussions to PRs. The Strategist tracks project velocity."
+    agents: [executor, connector, strategist, data_collector]
+    setup:
+      credentials_type: "personal_access_token"
+      env_var: "GITHUB_TOKEN"
+      instructions: "Create a personal access token at github.com/settings/tokens, set GITHUB_TOKEN in .env"
+    config:
+      repos_to_watch: []
+      sync_interval_minutes: 30
+
+  n8n:
+    enabled: false
+    description: "n8n workflow automation - agents can trigger workflows"
+    benefit: "The Executor can trigger automated workflows when tasks are created. Enables complex multi-step automations without code."
+    agents: [executor, data_collector]
+    setup:
+      credentials_type: "api_token"
+      env_var: "N8N_API_TOKEN"
+      instructions: "Set N8N_URL and N8N_API_TOKEN in .env"
+    config:
+      webhook_base_url: ""
